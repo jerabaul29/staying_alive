@@ -4,28 +4,46 @@ import shlex
 import time
 
 
-def run_command(exe, pooling_frequency=1.0):
-    proc = subprocess.Popen(shlex.split(exe), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    while(True):
-        time.sleep(1.0 / pooling_frequency)
+class command_runner(object):
+    def __init__(self):
+        """No init needed."""
+        pass
 
-        # returns None while subprocess is running
-        retcode = proc.poll()
-        line = proc.stdout.readline()
-        yield line
-        if retcode is not None:
-            break
+    def start_command(self, exe):
+        """Start a new process for the command to execute."""
+        self.proc = subprocess.Popen(shlex.split(exe), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def pool(self):
+        """Check if some standard output and provide it as a generator."""
+        while(True):
+            retcode = self.proc.poll()
+            line = self.proc.stdout.readline()
+
+            if line is not b'':
+                yield line
+
+            if retcode is not None:
+                break
+
+    def kill(self):
+        """Kill the process."""
+        self.proc.kill()
 
 
 def launch_and_keep_alive(command, frequency_check=1.0, time_to_start_s=60.0):
+    """Launch the process corresponding to command in a separate thread. Give it
+    time_to_start_s seconds to start. Following this, check at frequency_check that
+    some standard output is provided. If not standard output provided, assume dead or
+    stalled so kill and restart."""
 
     process_active = False
+    command_runner_instance = command_runner()
 
     while(True):
 
         # if no process active, restart one
         if not process_active:
-            yielder = run_command(command, pooling_frequency=2.0 * frequency_check)
+            command_runner_instance.start_command(command)
             time.sleep(time_to_start_s)
             process_active = True
 
@@ -35,37 +53,20 @@ def launch_and_keep_alive(command, frequency_check=1.0, time_to_start_s=60.0):
         # come out; if not, kill and restart
 
         try:
+            yielder = command_runner_instance.pool()
+
             # try to get one more; if exhausted of dead, it will except
             print(next(yielder))
 
-            # if not exhausted or dead, empty
+            # if not exhausted or dead, empty all of it
             for crrt_elem in yielder:
                 print(crrt_elem)
 
         except:
             print("dead or stalled processed!")
+            command_runner_instance.kill()
             process_active = False
 
 
-#  def run_command(command):
-#      p = subprocess.Popen(command,
-#                           stdout=subprocess.PIPE,
-#                           stderr=subprocess.STDOUT)
-#      return iter(p.stdout.readline, b'')
-
-#  def run_command(command):
-#      process = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
-#      while True:
-#          output = process.stdout.readline()
-#          if output == '' and process.poll() is not None:
-#              break
-#          if output:
-#              print(output.strip())
-#      rc = process.poll()
-#      return rc
-
-
-#  for line in run_command('python3 python_ping.py'):
-#      print(line)
-
-launch_and_keep_alive('python3 python_ping.py', time_to_start_s=0.5)
+if __name__ == "__main__":
+    launch_and_keep_alive('python3 python_ping.py', time_to_start_s=0.5)
